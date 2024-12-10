@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Packet Tester</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .controls { margin-bottom: 20px; }
+        #results { font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <input type="number" id="packetSize" value="1000" min="1"> bytes
+        <button onclick="startTest()">Start Test</button>
+        <button onclick="stopTest()">Stop</button>
+    </div>
+    <div id="results"></div>
+
+    <script>
+        let ws = null;
+        let testInterval = null;
+        let packetLoss = 0;
+        let totalPackets = 0;
+        let latencies = [];
+
+        function generatePayload(size) {
+            return 'x'.repeat(size);
+        }
+
+        function updateStats() {
+            const avgLatency = latencies.length > 0 
+                ? latencies.reduce((a, b) => a + b) / latencies.length 
+                : 0;
+            
+            document.getElementById('results').innerHTML = `
+                Total Packets: ${totalPackets}<br>
+                Packet Loss: ${packetLoss}<br>
+                Average Latency: ${avgLatency.toFixed(2)}ms
+            `;
+        }
+
+        function startTest() {
+            if (testInterval) return;
+            
+            const size = parseInt(document.getElementById('packetSize').value);
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            
+            ws.onopen = () => {
+                testInterval = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        const packet = {
+                            timestamp: Date.now(),
+                            payload: generatePayload(size),
+                            size: size
+                        };
+                        ws.send(JSON.stringify(packet));
+                        totalPackets++;
+                    }
+                }, 1000);
+            };
+
+            ws.onmessage = (event) => {
+                const packet = JSON.parse(event.data);
+                const latency = Date.now() - packet.timestamp;
+                latencies.push(latency);
+                if (latencies.length > 10) latencies.shift();
+                updateStats();
+            };
+
+            ws.onerror = () => {
+                packetLoss++;
+                updateStats();
+            };
+
+            ws.onclose = () => {
+                stopTest();
+            };
+        }
+
+        function stopTest() {
+            if (testInterval) {
+                clearInterval(testInterval);
+                testInterval = null;
+            }
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+    </script>
+</body>
+</html>
