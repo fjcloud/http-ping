@@ -1,80 +1,209 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>WebSocket Packet Tester</title>
+    <title>Network Packet Tester</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .controls { margin-bottom: 20px; }
-        #results { font-family: monospace; }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        .animate-pulse-slow {
+            animation: pulse 2s infinite;
+        }
     </style>
 </head>
-<body>
-    <div class="controls">
-        <input type="number" id="packetSize" value="1000" min="1"> bytes
-        <button onclick="startTest()">Start Test</button>
-        <button onclick="stopTest()">Stop</button>
-    </div>
-    <div id="results"></div>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-6xl mx-auto p-6">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Network Packet Tester</h1>
+            <p class="text-gray-600">Test network performance with different packet sizes</p>
+        </header>
 
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center space-x-6 mb-8">
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Packet Size</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="range" id="packetSize" 
+                               class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" 
+                               value="1000" min="100" max="10000" step="100">
+                        <span id="sizeValue" class="text-sm font-mono bg-gray-100 px-3 py-1 rounded">1000 bytes</span>
+                    </div>
+                </div>
+                <div class="flex space-x-4">
+                    <button id="startBtn" onclick="startTest()" 
+                            class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors">
+                        Start Test
+                    </button>
+                    <button id="stopBtn" onclick="stopTest()" 
+                            class="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition-colors" 
+                            disabled>
+                        Stop
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="totalPackets" class="text-3xl font-bold text-blue-600 mb-2">0</div>
+                    <div class="text-sm text-gray-600">Total Packets</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="packetLoss" class="text-3xl font-bold text-red-600 mb-2">0</div>
+                    <div class="text-sm text-gray-600">Packet Loss</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="avgLatency" class="text-3xl font-bold text-green-600 mb-2">0 ms</div>
+                    <div class="text-sm text-gray-600">Average Latency</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="currentLatency" class="text-3xl font-bold text-purple-600 mb-2">0 ms</div>
+                    <div class="text-sm text-gray-600">Current Latency</div>
+                </div>
+            </div>
+
+            <div class="bg-gray-50 rounded-lg p-4 h-64">
+                <canvas id="chart"></canvas>
+            </div>
+        </div>
+
+        <div id="connectionStatus" class="text-center text-sm text-gray-600">
+            Not connected
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <script>
         let ws = null;
         let testInterval = null;
-        let packetLoss = 0;
-        let totalPackets = 0;
-        let latencies = [];
+        let stats = {
+            totalPackets: 0,
+            packetLoss: 0,
+            latencies: []
+        };
+        let chart;
+        let currentSize = 1000;
+
+        function initChart() {
+            const ctx = document.getElementById('chart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Latency (ms)',
+                        data: [],
+                        borderColor: '#6366f1',
+                        backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateConnectionStatus(status, isError = false) {
+            const statusEl = document.getElementById('connectionStatus');
+            statusEl.textContent = status;
+            statusEl.className = `text-center text-sm ${isError ? 'text-red-500' : 'text-gray-600'}`;
+        }
+
+        function updateChart(latency) {
+            const now = new Date().toLocaleTimeString();
+            chart.data.labels.push(now);
+            chart.data.datasets[0].data.push(latency);
+
+            if (chart.data.labels.length > 30) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+
+            chart.update('none');
+        }
 
         function generatePayload(size) {
             return 'x'.repeat(size);
         }
 
-        function updateStats() {
-            const avgLatency = latencies.length > 0 
-                ? latencies.reduce((a, b) => a + b) / latencies.length 
-                : 0;
+        function updateStats(latency) {
+            stats.latencies.push(latency);
+            if (stats.latencies.length > 50) stats.latencies.shift();
+
+            const avgLatency = stats.latencies.reduce((a, b) => a + b, 0) / stats.latencies.length;
+
+            document.getElementById('totalPackets').textContent = stats.totalPackets;
+            document.getElementById('packetLoss').textContent = stats.packetLoss;
+            document.getElementById('avgLatency').textContent = `${avgLatency.toFixed(1)} ms`;
+            document.getElementById('currentLatency').textContent = `${latency.toFixed(1)} ms`;
             
-            document.getElementById('results').innerHTML = `
-                Total Packets: ${totalPackets}<br>
-                Packet Loss: ${packetLoss}<br>
-                Average Latency: ${avgLatency.toFixed(2)}ms
-            `;
+            updateChart(latency);
         }
 
         function startTest() {
             if (testInterval) return;
             
-            const size = parseInt(document.getElementById('packetSize').value);
+            document.getElementById('startBtn').disabled = true;
+            document.getElementById('stopBtn').disabled = false;
+            
             ws = new WebSocket(`ws://${window.location.host}/ws`);
             
             ws.onopen = () => {
-                testInterval = setInterval(() => {
-                    if (ws.readyState === WebSocket.OPEN) {
-                        const packet = {
-                            timestamp: Date.now(),
-                            payload: generatePayload(size),
-                            size: size
-                        };
-                        ws.send(JSON.stringify(packet));
-                        totalPackets++;
-                    }
-                }, 1000);
+                updateConnectionStatus('Connected and testing');
+                testInterval = setInterval(sendPacket, 1000);
             };
 
             ws.onmessage = (event) => {
                 const packet = JSON.parse(event.data);
-                const latency = Date.now() - packet.timestamp;
-                latencies.push(latency);
-                if (latencies.length > 10) latencies.shift();
-                updateStats();
+                updateStats(packet.latency);
             };
 
             ws.onerror = () => {
-                packetLoss++;
-                updateStats();
+                stats.packetLoss++;
+                document.getElementById('packetLoss').textContent = stats.packetLoss;
+                updateConnectionStatus('Connection error', true);
             };
 
             ws.onclose = () => {
                 stopTest();
+                updateConnectionStatus('Disconnected');
             };
+        }
+
+        function sendPacket() {
+            if (ws?.readyState === WebSocket.OPEN) {
+                const packet = {
+                    id: Date.now().toString(),
+                    timestamp: Date.now(),
+                    payload: generatePayload(currentSize),
+                    size: currentSize
+                };
+                ws.send(JSON.stringify(packet));
+                stats.totalPackets++;
+            }
         }
 
         function stopTest() {
@@ -86,7 +215,17 @@
                 ws.close();
                 ws = null;
             }
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
         }
+
+        const sizeSlider = document.getElementById('packetSize');
+        sizeSlider.addEventListener('input', (e) => {
+            currentSize = parseInt(e.target.value);
+            document.getElementById('sizeValue').textContent = `${currentSize} bytes`;
+        });
+
+        initChart();
     </script>
 </body>
 </html>

@@ -3,7 +3,13 @@ FROM registry.redhat.io/ubi9/go-toolset:latest as builder
 WORKDIR /app
 COPY . .
 
-RUN CGO_ENABLED=0 go build -buildvcs=false -ldflags="-s -w" -o main .
+USER root
+RUN chown -R 1001:1001 /app
+USER 1001
+
+RUN go mod init websocket-tester && \
+    go mod tidy && \
+    CGO_ENABLED=0 go build -buildvcs=false -ldflags="-s -w" -o main .
 
 FROM registry.redhat.io/ubi9/ubi-minimal:latest
 
