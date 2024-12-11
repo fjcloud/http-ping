@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Packet Test</title>
+<style>
+body{margin:20px;font:14px arial}
+.v{font-size:20px}
+</style>
+</head>
+<body>
+<input type="number" id="s" value="100">
+<button onclick="t()">Start</button>
+<button onclick="p()">Stop</button><br>
+<div>Total: <span id="t" class="v">0</span></div>
+<div>Loss: <span id="l" class="v">0</span></div>
+<div>Latency: <span id="m" class="v">0</span>ms</div>
+<script>
+let w,i,n=0,l=0
+function t(){
+if(i)return
+w=new WebSocket(`ws://${location.host}/ws`)
+w.onopen=()=>i=setInterval(e,1000)
+w.onmessage=e=>{
+let d=JSON.parse(e.data)
+n++
+document.getElementById('t').textContent=n
+document.getElementById('m').textContent=d.latency.toFixed(1)
+}
+w.onerror=()=>{
+l++
+document.getElementById('l').textContent=l
+}}
+function e(){
+w.send(JSON.stringify({
+timestamp:Date.now(),
+payload:'x'.repeat(+document.getElementById('s').value)
+}))}
+function p(){
+if(i){clearInterval(i);i=0}
+if(w){w.close();w=0}
+}
+</script>
+</body>
+</html>
