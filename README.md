@@ -16,6 +16,16 @@ oc expose svc/http-ping
 oc create route edge --service http-ping
 ```
 
-For minify version (under 800 bytes) go on http://<url>/min
+## Usage
+
+Get URL
+
+```shell
+oc get route
+```
+
+For minify version index.html (under 800 bytes) go on http://<url>/min
+
+## Purpose
 
 This app purpose is to debug MTU Path issue between client and server
