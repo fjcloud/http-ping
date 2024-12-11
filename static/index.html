@@ -14,22 +14,98 @@
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <!-- Previous HTML remains exactly the same until the script part -->
+    <div class="max-w-6xl mx-auto p-6">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800">Network Packet Tester</h1>
+            <p class="text-gray-600">Test network performance with different packet sizes</p>
+        </header>
+
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <div class="flex items-center space-x-6 mb-8">
+                <div class="flex-1">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Packet Size</label>
+                    <div class="flex items-center space-x-4">
+                        <input type="range" id="packetSize" 
+                               class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" 
+                               value="1000" min="100" max="10000" step="100">
+                        <span id="sizeValue" class="text-sm font-mono bg-gray-100 px-3 py-1 rounded">1000 bytes</span>
+                    </div>
+                </div>
+                <div class="flex space-x-4">
+                    <button id="startBtn" onclick="startTest()" 
+                            class="bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors">
+                        Start Test
+                    </button>
+                    <button id="stopBtn" onclick="stopTest()" 
+                            class="bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg transition-colors" 
+                            disabled>
+                        Stop
+                    </button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="totalPackets" class="text-3xl font-bold text-blue-600 mb-2">0</div>
+                    <div class="text-sm text-gray-600">Total Packets</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="packetLoss" class="text-3xl font-bold text-red-600 mb-2">0</div>
+                    <div class="text-sm text-gray-600">Packet Loss</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="avgLatency" class="text-3xl font-bold text-green-600 mb-2">0 ms</div>
+                    <div class="text-sm text-gray-600">Average Latency</div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <div id="currentLatency" class="text-3xl font-bold text-purple-600 mb-2">0 ms</div>
+                    <div class="text-sm text-gray-600">Current Latency</div>
+                </div>
+            </div>
+
+            <div class="bg-gray-50 rounded-lg p-4 h-64">
+                <canvas id="chart"></canvas>
+            </div>
+
+            <div class="mt-4">
+                <div id="tcpFragments" class="text-sm text-gray-500"></div>
+            </div>
+        </div>
+
+        <div id="connectionStatus" class="text-center text-sm text-gray-600">
+            Not connected
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <script>
+        const TIMEOUT = 3000;  // 3 second timeout
+        const MTU = 1300;      // Approximate MTU after headers
+
         let ws = null;
         let testInterval = null;
-        let pendingPackets = new Map(); // Track packets waiting for response
-        const TIMEOUT = 3000; // 3 seconds timeout
+        let pendingPackets = new Map();
+        let chart;
+        let currentSize = 1000;
         let stats = {
             totalPackets: 0,
             packetLoss: 0,
-            latencies: [],
-            pending: 0,
-            fragments: 0
+            latencies: []
         };
-        let chart;
-        let currentSize = 1000;
+
+        function calculateFragments(size) {
+            return Math.ceil(size / MTU);
+        }
+
+        function updateFragmentInfo() {
+            const fragments = calculateFragments(currentSize);
+            const fragmentsEl = document.getElementById('tcpFragments');
+            if (fragments > 1) {
+                fragmentsEl.textContent = `Current packet size will be split into approximately ${fragments} TCP fragments`;
+            } else {
+                fragmentsEl.textContent = 'Single TCP packet';
+            }
+        }
 
         function initChart() {
             const ctx = document.getElementById('chart').getContext('2d');
@@ -51,35 +127,35 @@
                     maintainAspectRatio: false,
                     animation: false,
                     plugins: {
-                        legend: {
-                            display: false
-                        }
+                        legend: { display: false }
                     },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            grid: {
-                                color: 'rgba(0, 0, 0, 0.05)'
-                            }
+                            grid: { color: 'rgba(0, 0, 0, 0.05)' }
                         },
                         x: {
-                            grid: {
-                                display: false
-                            }
+                            grid: { display: false }
                         }
                     }
                 }
             });
         }
 
+        function checkTimeouts() {
+            const now = Date.now();
+            for (const [id, timestamp] of pendingPackets.entries()) {
+                if (now - timestamp > TIMEOUT) {
+                    stats.packetLoss++;
+                    pendingPackets.delete(id);
+                    document.getElementById('packetLoss').textContent = stats.packetLoss;
+                }
+            }
+        }
+
         function updateConnectionStatus(status, isError = false) {
             const statusEl = document.getElementById('connectionStatus');
-            let estimation = '';
-            if (currentSize > 1300) {
-                const fragments = Math.ceil(currentSize / 1300);
-                estimation = ` (≈${fragments} TCP fragments)`;
-            }
-            statusEl.textContent = status + estimation;
+            statusEl.textContent = status;
             statusEl.className = `text-center text-sm ${isError ? 'text-red-500' : 'text-gray-600'}`;
         }
 
@@ -94,17 +170,6 @@
             }
 
             chart.update('none');
-        }
-
-        function checkTimeouts() {
-            const now = Date.now();
-            for (const [id, timestamp] of pendingPackets.entries()) {
-                if (now - timestamp > TIMEOUT) {
-                    stats.packetLoss++;
-                    pendingPackets.delete(id);
-                    document.getElementById('packetLoss').textContent = stats.packetLoss;
-                }
-            }
         }
 
         function generatePayload(size) {
@@ -128,14 +193,20 @@
         function startTest() {
             if (testInterval) return;
             
+            // Reset stats
             stats = {
                 totalPackets: 0,
                 packetLoss: 0,
-                latencies: [],
-                pending: 0,
-                fragments: 0
+                latencies: []
             };
             pendingPackets.clear();
+            chart.data.labels = [];
+            chart.data.datasets[0].data = [];
+            chart.update();
+            
+            ['totalPackets', 'packetLoss', 'avgLatency', 'currentLatency'].forEach(id => {
+                document.getElementById(id).textContent = '0';
+            });
             
             document.getElementById('startBtn').disabled = true;
             document.getElementById('stopBtn').disabled = false;
@@ -180,6 +251,7 @@
                 pendingPackets.set(id, Date.now());
                 ws.send(JSON.stringify(packet));
                 stats.totalPackets++;
+                document.getElementById('totalPackets').textContent = stats.totalPackets;
             }
         }
 
@@ -197,14 +269,16 @@
             document.getElementById('stopBtn').disabled = true;
         }
 
+        // Initialize
         const sizeSlider = document.getElementById('packetSize');
         sizeSlider.addEventListener('input', (e) => {
             currentSize = parseInt(e.target.value);
             document.getElementById('sizeValue').textContent = `${currentSize} bytes`;
-            updateConnectionStatus('Connected and testing'); // Update fragment estimation
+            updateFragmentInfo();
         });
 
         initChart();
+        updateFragmentInfo();
     </script>
 </body>
 </html>
