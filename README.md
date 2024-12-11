@@ -24,7 +24,7 @@ Get URL
 oc get route
 ```
 
-For minify version index.html (under 800 bytes) go on http://*URL*/min
+For minify version index.html (under 800 bytes) go on http(s)://*Your_URL*/min
 
 ## Purpose
 
