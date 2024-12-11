@@ -15,29 +15,47 @@ body{margin:20px;font:14px arial}
 <div>Loss: <span id="l" class="v">0</span></div>
 <div>Latency: <span id="m" class="v">0</span>ms</div>
 <script>
-let w,i,n=0,l=0
+let w,i,n=0,l=0,q={}
+const TO=3000 // 3 second timeout
+
 function t(){
-if(i)return
-w=new WebSocket(`ws://${location.host}/ws`)
-w.onopen=()=>i=setInterval(e,1000)
-w.onmessage=e=>{
-let d=JSON.parse(e.data)
-n++
-document.getElementById('t').textContent=n
-document.getElementById('m').textContent=d.latency.toFixed(1)
+  if(i)return
+  w=new WebSocket(`ws://${location.host}/ws`)
+  w.onopen=()=>i=setInterval(e,1000)
+  w.onmessage=e=>{
+    let d=JSON.parse(e.data)
+    delete q[d.id]  // Remove from pending
+    n++
+    document.getElementById('t').textContent=n
+    document.getElementById('m').textContent=d.latency.toFixed(1)
+  }
+  w.onerror=()=>p()
 }
-w.onerror=()=>{
-l++
-document.getElementById('l').textContent=l
-}}
+
 function e(){
-w.send(JSON.stringify({
-timestamp:Date.now(),
-payload:'x'.repeat(+document.getElementById('s').value)
-}))}
+  // Clean old packets
+  let now=Date.now()
+  Object.entries(q).forEach(([id,t])=>{
+    if(now-t>TO){
+      l++
+      document.getElementById('l').textContent=l
+      delete q[id]
+    }
+  })
+  // Send new packet
+  let id=now.toString()
+  q[id]=now
+  w.send(JSON.stringify({
+    id:id,
+    timestamp:now,
+    payload:'x'.repeat(+document.getElementById('s').value)
+  }))
+}
+
 function p(){
-if(i){clearInterval(i);i=0}
-if(w){w.close();w=0}
+  if(i){clearInterval(i);i=0}
+  if(w){w.close();w=0}
+  q={}
 }
 </script>
 </body>
